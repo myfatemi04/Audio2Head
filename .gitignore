@@ -1,3 +1,5 @@
 checkpoints
 **/__pycache__
 temp
+*.jpeg
+audio.mp3

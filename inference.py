@@ -244,9 +244,10 @@ def audio2head(audio_path, img_path, model_path, save_path):
     # imageio.mimsave(video_path, predictions_gen, fps=25.0)
 
     save_video = os.path.join(log_dir, image_name)
-    cmd = r'ffmpeg -y -i "%s" -i "%s" -vcodec copy "%s"' % (video_path, audio_path, save_video)
+    cmd = r'ffmpeg -y -i "%s" -i "%s" -vcodec libx264 "%s"' % (video_path, audio_path, save_video)
     os.system(cmd)
     os.remove(video_path)
+    return save_video
     
 
 if __name__ == '__main__':
