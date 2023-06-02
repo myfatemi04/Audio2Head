@@ -6,13 +6,34 @@ import os
 import elevenlabs
 from inference import audio2head
 
+with open("11.key") as f:
+	os.environ['ELEVENLABS_API_KEY'] = f.read().strip()
+
 import flask
 
 app = flask.Flask(__name__)
 
 @app.route("/")
 def index():
-	return "Hello world!"
+	return """
+<script>
+function anim() {
+	var text = document.getElementById('text').value;
+	document.getElementById('text').value = '';
+	if (text.trim() == '') {
+		return;
+	}
+	var video = document.getElementById('v');
+	video.src = 'http://34.69.198.158/animate?text=' + encodeURIComponent(text);
+	console.log("Animating...");
+}
+</script>
+
+<input type="text" id="text">
+<button onclick="anim()">Animate</button>
+
+<video id=v controls></video>	
+"""
 
 @app.route("/animate", methods=['GET'])
 def animate_head():
