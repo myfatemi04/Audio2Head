@@ -13,6 +13,7 @@ from modules.generator import OcclusionAwareGenerator
 from modules.keypoint_detector import KPDetector
 from modules.audio2kp import AudioModel3D
 import yaml,os,imageio
+import tqdm
 
 def draw_annotation_box( image, rotation_vector, translation_vector, color=(255, 255, 255), line_width=2):
     """Draw a 3D box as annotation of pose"""
@@ -40,7 +41,7 @@ def draw_annotation_box( image, rotation_vector, translation_vector, color=(255,
     point_3d.append((front_size, front_size, front_depth))
     point_3d.append((front_size, -front_size, front_depth))
     point_3d.append((-front_size, -front_size, front_depth))
-    point_3d = np.array(point_3d, dtype=np.float).reshape(-1, 3)
+    point_3d = np.array(point_3d, dtype=np.float32).reshape(-1, 3)
 
     # Map to 2d image points
     (point_2d, _) = cv2.projectPoints(point_3d,
@@ -138,7 +139,7 @@ def audio2head(audio_path, img_path, model_path, save_path):
 
     config_file = r"./config/vox-256.yaml"
     with open(config_file) as f:
-        config = yaml.load(f)
+        config = yaml.load(f, yaml.FullLoader)
     kp_detector = KPDetector(**config['model_params']['kp_detector_params'],
                              **config['model_params']['common_params'])
     generator = OcclusionAwareGenerator(**config['model_params']['generator_params'],
@@ -146,7 +147,7 @@ def audio2head(audio_path, img_path, model_path, save_path):
     kp_detector = kp_detector.cuda()
     generator = generator.cuda()
 
-    opt = argparse.Namespace(**yaml.load(open("./config/parameters.yaml")))
+    opt = argparse.Namespace(**yaml.load(open("./config/parameters.yaml"), yaml.FullLoader))
     audio2kp = AudioModel3D(opt).cuda()
 
     checkpoint  = torch.load(model_path)
@@ -187,7 +188,7 @@ def audio2head(audio_path, img_path, model_path, save_path):
     predictions_gen = []
     total_frames = 0
     
-    for bs_idx in range(bs):
+    for bs_idx in tqdm.tqdm(range(bs), desc='rendering...'):
         t = {}
 
         t["audio"] = audio_f[:, bs_idx].cuda()
@@ -229,8 +230,18 @@ def audio2head(audio_path, img_path, model_path, save_path):
     image_name = os.path.basename(img_path)[:-4]+ "_" + os.path.basename(audio_path)[:-4] + ".mp4"
 
     video_path = os.path.join(log_dir, "temp", image_name)
+    
+    np.save(os.path.join(log_dir, "temp", image_name[:-4] + ".npy"), predictions_gen)
 
-    imageio.mimsave(video_path, predictions_gen, fps=25.0)
+    # save video
+    fourcc = cv2.VideoWriter_fourcc(*'MP4V')
+    video = cv2.VideoWriter(video_path, fourcc, 25, predictions_gen[0].shape[:2][::-1])
+    for image in predictions_gen:
+        # switch rgb color channels
+        video.write(image[:, :, ::-1])
+    video.release()
+
+    # imageio.mimsave(video_path, predictions_gen, fps=25.0)
 
     save_video = os.path.join(log_dir, image_name)
     cmd = r'ffmpeg -y -i "%s" -i "%s" -vcodec copy "%s"' % (video_path, audio_path, save_video)
