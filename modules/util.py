@@ -23,21 +23,25 @@ def kp2gaussian(kp, spatial_size, kp_variance):
     """
     Transform a keypoint into gaussian like representation
     """
+    # shape: (bs, numkp, 2)
     mean = kp['value'] #bs*numkp*2
 
-    coordinate_grid = make_coordinate_grid(spatial_size, mean.type()) #h*w*2
-    number_of_leading_dimensions = len(mean.shape) - 1
-    shape = (1,) * number_of_leading_dimensions + coordinate_grid.shape #1*1*h*w*2
-    coordinate_grid = coordinate_grid.view(*shape)
-    repeats = mean.shape[:number_of_leading_dimensions] + (1, 1, 1)
-    coordinate_grid = coordinate_grid.repeat(*repeats)  #bs*numkp*h*w*2
+    batch_size = mean.shape[0]
+    num_keypoints = mean.shape[1]
 
-    # Preprocess kp shape
-    shape = mean.shape[:number_of_leading_dimensions] + (1, 1, 2)
-    mean = mean.view(*shape)
+    # h*w*2
+    coordinate_grid = make_coordinate_grid(spatial_size, mean.type()).unsqueeze(0).unsqueeze(0)
+    # shape = (1, 1, *coordinate_grid.shape) #1*1*h*w*2
+    # coordinate_grid = coordinate_grid.view(*shape)
+    # tuple: (bs, numkp, 1, 1, 1)
+    coordinate_grid = coordinate_grid.repeat((batch_size, num_keypoints, 1, 1, 1))  #bs*numkp*h*w*2
 
-    mean_sub = (coordinate_grid - mean)
+    print(coordinate_grid.shape, mean.shape)
 
+    # shape: (bs, numkp, h, w, 2)
+    mean_sub = coordinate_grid - mean.unsqueeze(2).unsqueeze(2)
+
+    # shape: (bs, numkp, h, w)
     out = torch.exp(-0.5 * (mean_sub ** 2).sum(-1) / kp_variance)
 
     return out

@@ -128,7 +128,7 @@ def audio2head(request_id, img_path, kp_detector, generator, audio2kp, audio2pos
 
     # Convert mp3 to wav
     command = ("ffmpeg -y -i %s -async 1 -ac 1 -vn -acodec pcm_s16le -ar 16000 %s" % (mp3_audio_path, wav_audio_path))
-    output = subprocess.call(command, shell=True, stdout=None)
+    subprocess.call(command, shell=True, stdout=None)
 
     audio_feature = get_audio_feature_from_audio(wav_audio_path)
     frames = len(audio_feature) // 4
@@ -138,6 +138,7 @@ def audio2head(request_id, img_path, kp_detector, generator, audio2kp, audio2pos
 
     img = np.array(img_as_float32(img))
     img = img.transpose((2, 0, 1))
+    # img: (1, 3, 256, 256)
     img = torch.from_numpy(img).unsqueeze(0).cuda()
 
     ref_pose_rot, ref_pose_trans = get_pose_from_audio(img, audio_feature, audio2pose)
@@ -169,49 +170,87 @@ def audio2head(request_id, img_path, kp_detector, generator, audio2kp, audio2pos
     audio_f = torch.from_numpy(np.array(audio_f,dtype=np.float32)).unsqueeze(0)
     poses = torch.from_numpy(np.array(poses, dtype=np.float32)).unsqueeze(0)
 
-    bs = audio_f.shape[1]
+    num_batches = audio_f.shape[1]
     predictions_gen = []
     total_frames = 0
     
-    for bs_idx in tqdm.tqdm(range(bs), desc='rendering...'):
+    # {value: (b, c, 2), jacobian_map: (b, j, 4, h, w), jacobian: (b, j, 2, 2), pred_fature: (b, f, h, w)}
+    # where b = 1 for the initial image
+    kp_gen_source = kp_detector(img)
+    for batch_index in tqdm.tqdm(range(num_batches), desc='rendering...'):
         t = {}
 
-        t["audio"] = audio_f[:, bs_idx].cuda()
-        t["pose"] = poses[:, bs_idx].cuda()
+        t["audio"] = audio_f[:, batch_index].cuda()
+        t["pose"] = poses[:, batch_index].cuda()
         t["id_img"] = img
-        kp_gen_source = kp_detector(img)
 
+        # same format as before
         gen_kp = audio2kp(t)
-        if bs_idx == 0:
+        if batch_index == 0:
             startid = 0
             end_id = opt.seq_len // 4 * 3
         else:
             startid = opt.seq_len // 4
             end_id = opt.seq_len // 4 * 3
 
-        for frame_bs_idx in range(startid, end_id):
-            tt = {}
-            tt["value"] = gen_kp["value"][:, frame_bs_idx]
-            if opt.estimate_jacobian:
-                tt["jacobian"] = gen_kp["jacobian"][:, frame_bs_idx]
-            out_gen = generator(img, kp_source=kp_gen_source, kp_driving=tt)
-            out_gen["kp_source"] = kp_gen_source
-            out_gen["kp_driving"] = tt
-            del out_gen['sparse_deformed']
-            del out_gen['occlusion_map']
-            del out_gen['deformed']
+        # for frame_bs_idx in range(startid, end_id):
+        #     tt = {}
+        #     tt["value"] = gen_kp["value"][:, frame_bs_idx]
+        #     if opt.estimate_jacobian:
+        #         tt["jacobian"] = gen_kp["jacobian"][:, frame_bs_idx]
+        #     out_gen = generator(img, kp_source=kp_gen_source, kp_driving=tt)
+        #     out_gen["kp_source"] = kp_gen_source
+        #     out_gen["kp_driving"] = tt
+        #     del out_gen['sparse_deformed']
+        #     del out_gen['occlusion_map']
+        #     del out_gen['deformed']
             
-            # # YIELD a prediction
-            # yield (np.transpose(out_gen['prediction'].data.cpu().numpy(), [0, 2, 3, 1])[0] * 255).astype(np.uint8)
-            predictions_gen.append(
-                (np.transpose(out_gen['prediction'].data.cpu().numpy(), [0, 2, 3, 1])[0] * 255).astype(np.uint8)
-            )
+        #     # # YIELD a prediction
+        #     # yield (np.transpose(out_gen['prediction'].data.cpu().numpy(), [0, 2, 3, 1])[0] * 255).astype(np.uint8)
+        #     predictions_gen.append(
+        #         (np.transpose(out_gen['prediction'].data.cpu().numpy(), [0, 2, 3, 1])[0] * 255).astype(np.uint8)
+        #     )
 
-            total_frames += 1
-            if total_frames >= frames:
-                break
+        #     total_frames += 1
+        #     if total_frames >= frames:
+        #         break
+
+        ones = [1, 1, 1, 1, 1, 1]
+
+        num_frames = end_id - startid
+        img_batch = img.repeat(num_frames, *ones[:len(img.shape) - 1])
+        # this code is horrid. im so sorry.
+        kp_gen_source_batch = {
+            'value': kp_gen_source['value'].repeat(num_frames, *ones[:len(kp_gen_source['value'].shape) - 1]),
+            'jacobian': kp_gen_source['jacobian'].repeat(num_frames, *ones[:len(kp_gen_source['jacobian'].shape) - 1]),
+            'jacobian_map': kp_gen_source['jacobian_map'].repeat(num_frames, *ones[:len(kp_gen_source['jacobian_map'].shape) - 1]),
+            'pred_fature': kp_gen_source['pred_fature'].repeat(num_frames, *ones[:len(kp_gen_source['pred_fature'].shape) - 1]),
+        }
+        tt = {
+            'value': gen_kp['value'][0, startid:end_id],
+            'jacobian': gen_kp['jacobian'][0, startid:end_id],
+        }
+        print('tt_value.shape:', tt['value'].shape)
+        print('tt_jacobian.shape:', tt['jacobian'].shape)
+
+        out_gen = generator(img_batch, kp_source=kp_gen_source_batch, kp_driving=tt)
+        out_gen["kp_source"] = kp_gen_source_batch
+        out_gen["kp_driving"] = tt
+        del out_gen['sparse_deformed']
+        del out_gen['occlusion_map']
+        del out_gen['deformed']
+        
+        # # YIELD a prediction
+        # yield (np.transpose(out_gen['prediction'].data.cpu().numpy(), [0, 2, 3, 1])[0] * 255).astype(np.uint8)
+        predictions_gen.extend(
+            (np.transpose(out_gen['prediction'].data.cpu().numpy(), [0, 2, 3, 1]) * 255).astype(np.uint8)
+        )
+
+        total_frames += gen_kp['value'].shape[0]
         if total_frames >= frames:
             break
+
+    predictions_gen = predictions_gen[:frames]
     
     # save video
     fourcc = cv2.VideoWriter_fourcc(*'MP4V')

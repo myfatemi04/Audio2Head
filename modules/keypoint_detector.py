@@ -38,40 +38,59 @@ class KPDetector(nn.Module):
         """
         Extract the mean and from a heatmap
         """
+        # shape: (b, c, h, w)
         shape = heatmap.shape
         heatmap = heatmap.unsqueeze(-1)
+        # creates a coordinate grid of shape (h, w, 2) and then adds two initial dimensions
+        # grid: (b, c = 1, h, w, 2)
         grid = make_coordinate_grid(shape[2:], heatmap.type()).unsqueeze_(0).unsqueeze_(0)
+        # multiply heatmap by grid positions and add together
+        # (i.e., expected value of position based on coordinate grid)
+        # value: (b, c, 2)
         value = (heatmap * grid).sum(dim=(2, 3))
         kp = {'value': value}
 
         return kp
 
     def forward(self, x):
+        # x: [B, channels, height, width]
         if self.scale_factor != 1:
             x = self.down(x)
 
+        batch_size = x.shape[0]
+
+        # feature_map: [B, channels, height, width]
         feature_map = self.predictor(x)
+        # prediction: [B, channels, height, width]
         prediction = self.kp(feature_map)
 
         final_shape = prediction.shape
+        # Softmax over pixels
         heatmap = prediction.view(final_shape[0], final_shape[1], -1)
         heatmap = F.softmax(heatmap / self.temperature, dim=2)
         heatmap = heatmap.view(*final_shape)
 
+        # {value: (b, c, 2)}
         out = self.gaussian2kp(heatmap)
 
         if self.jacobian is not None:
+            # shape: [B, C, H, W]
             jacobian_map = self.jacobian(feature_map)
-
+            # shape: [B, num_jacobian_maps, 4, H, W]
             jacobian_map = jacobian_map.reshape(final_shape[0], self.num_jacobian_maps, 4, final_shape[2],
                                                 final_shape[3])
             out["jacobian_map"] = jacobian_map
-            heatmap = heatmap.unsqueeze(2)
-
-            jacobian = heatmap * jacobian_map
+            
+            # shape: [B, num_jacobian_maps, 4, H, W]
+            jacobian = heatmap.unsqueeze(2) * jacobian_map
+            # shape: [B, num_jacobian_maps, 4, H * W]
             jacobian = jacobian.view(final_shape[0], final_shape[1], 4, -1)
+            # shape: [B, num_jacobian_maps, 4]
             jacobian = jacobian.sum(dim=-1)
+            # shape: [B, num_jacobian_maps, 2, 2]
             jacobian = jacobian.view(jacobian.shape[0], jacobian.shape[1], 2, 2)
             out['jacobian'] = jacobian
+
+        # {value: (b, c, 2), jacobian_map: (b, j, 4, h, w), jacobian: (b, j, 2, 2), pred_fature: (b, f, h, w)}
         out["pred_fature"] = prediction
         return out

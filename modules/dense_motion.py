@@ -32,10 +32,14 @@ class DenseMotionNetwork(nn.Module):
         """
         Eq 6. in the paper H_k(z)
         """
+        # source_image: (b, c, h, w)
         spatial_size = source_image.shape[2:]
         gaussian_driving = kp2gaussian(kp_driving, spatial_size=spatial_size, kp_variance=self.kp_variance)
         gaussian_source = kp2gaussian(kp_source, spatial_size=spatial_size, kp_variance=self.kp_variance)
+        print("gaussian_driving.shape:", gaussian_driving.shape)
+        print("source_image.shape:", source_image.shape)
         heatmap = gaussian_driving - gaussian_source
+        print("heatmap.shape:", source_image.shape)
 
         #adding background feature
         zeros = torch.zeros(heatmap.shape[0], 1, spatial_size[0], spatial_size[1]).type(heatmap.type())
