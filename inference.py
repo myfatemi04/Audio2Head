@@ -143,27 +143,6 @@ def audio2head(request_id, img_path, kp_detector, generator, audio2kp, audio2pos
     ref_pose_rot, ref_pose_trans = get_pose_from_audio(img, audio_feature, audio2pose)
     torch.cuda.empty_cache()
 
-    # config_file = r"./config/vox-256.yaml"
-    # with open(config_file) as f:
-    #     config = yaml.load(f, yaml.FullLoader)
-    # kp_detector = KPDetector(**config['model_params']['kp_detector_params'],
-    #                          **config['model_params']['common_params'])
-    # generator = OcclusionAwareGenerator(**config['model_params']['generator_params'],
-    #                                     **config['model_params']['common_params'])
-    # kp_detector = kp_detector.cuda()
-    # generator = generator.cuda()
-
-    # audio2kp = AudioModel3D(opt).cuda()
-
-    # checkpoint  = torch.load(model_path)
-    # kp_detector.load_state_dict(checkpoint["kp_detector"])
-    # generator.load_state_dict(checkpoint["generator"])
-    # audio2kp.load_state_dict(checkpoint["audio2kp"])
-
-    # generator.eval()
-    # kp_detector.eval()
-    # audio2kp.eval()
-    
     opt = argparse.Namespace(**yaml.load(open("./config/parameters.yaml"), yaml.FullLoader))
     audio_f = []
     poses = []
@@ -221,24 +200,19 @@ def audio2head(request_id, img_path, kp_detector, generator, audio2kp, audio2pos
             del out_gen['sparse_deformed']
             del out_gen['occlusion_map']
             del out_gen['deformed']
+            
+            # # YIELD a prediction
+            # yield (np.transpose(out_gen['prediction'].data.cpu().numpy(), [0, 2, 3, 1])[0] * 255).astype(np.uint8)
             predictions_gen.append(
-                (np.transpose(out_gen['prediction'].data.cpu().numpy(), [0, 2, 3, 1])[0] * 255).astype(np.uint8))
+                (np.transpose(out_gen['prediction'].data.cpu().numpy(), [0, 2, 3, 1])[0] * 255).astype(np.uint8)
+            )
 
             total_frames += 1
             if total_frames >= frames:
                 break
         if total_frames >= frames:
             break
-
-    # log_dir = save_path
-    # if not os.path.exists(os.path.join(log_dir, "temp")):
-    #     os.makedirs(os.path.join(log_dir, "temp"))
-    # image_name = os.path.basename(img_path)[:-4]+ "_" + os.path.basename(audio_path)[:-4] + ".mp4"
-
-    # video_path = os.path.join(log_dir, "temp", image_name)
     
-    # np.save(os.path.join(log_dir, "temp", image_name[:-4] + ".npy"), predictions_gen)
-
     # save video
     fourcc = cv2.VideoWriter_fourcc(*'MP4V')
     video = cv2.VideoWriter(raw_video_path, fourcc, 25, predictions_gen[0].shape[:2][::-1])
