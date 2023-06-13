@@ -173,47 +173,30 @@ def audio2head(request_id, img_path, kp_detector, generator, audio2kp, audio2pos
     num_batches = audio_f.shape[1]
     predictions_gen = []
     total_frames = 0
+
+    # generated_keypoints = {
+    #     "value": [],
+    #     "jacobian": [],
+    # }
     
     # {value: (b, c, 2), jacobian_map: (b, j, 4, h, w), jacobian: (b, j, 2, 2), pred_fature: (b, f, h, w)}
     # where b = 1 for the initial image
     kp_gen_source = kp_detector(img)
     for batch_index in tqdm.tqdm(range(num_batches), desc='rendering...'):
-        t = {}
+        # same format as before, but for some reason, the first dimension is 1 for all of them, and the second dimension
+        # is the batch size.
+        gen_kp = audio2kp({
+            "audio": audio_f[:, batch_index].cuda(),
+            "pose": poses[:, batch_index].cuda(),
+            "id_img": img,
+        })
 
-        t["audio"] = audio_f[:, batch_index].cuda()
-        t["pose"] = poses[:, batch_index].cuda()
-        t["id_img"] = img
-
-        # same format as before
-        gen_kp = audio2kp(t)
         if batch_index == 0:
             startid = 0
             end_id = opt.seq_len // 4 * 3
         else:
             startid = opt.seq_len // 4
             end_id = opt.seq_len // 4 * 3
-
-        # for frame_bs_idx in range(startid, end_id):
-        #     tt = {}
-        #     tt["value"] = gen_kp["value"][:, frame_bs_idx]
-        #     if opt.estimate_jacobian:
-        #         tt["jacobian"] = gen_kp["jacobian"][:, frame_bs_idx]
-        #     out_gen = generator(img, kp_source=kp_gen_source, kp_driving=tt)
-        #     out_gen["kp_source"] = kp_gen_source
-        #     out_gen["kp_driving"] = tt
-        #     del out_gen['sparse_deformed']
-        #     del out_gen['occlusion_map']
-        #     del out_gen['deformed']
-            
-        #     # # YIELD a prediction
-        #     # yield (np.transpose(out_gen['prediction'].data.cpu().numpy(), [0, 2, 3, 1])[0] * 255).astype(np.uint8)
-        #     predictions_gen.append(
-        #         (np.transpose(out_gen['prediction'].data.cpu().numpy(), [0, 2, 3, 1])[0] * 255).astype(np.uint8)
-        #     )
-
-        #     total_frames += 1
-        #     if total_frames >= frames:
-        #         break
 
         ones = [1, 1, 1, 1, 1, 1]
 
