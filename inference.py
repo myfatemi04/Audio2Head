@@ -121,17 +121,25 @@ def get_audio_feature_from_audio(audio_path,norm = True):
 
 @torch.no_grad()
 def audio2head(request_id, img_path, kp_detector, generator, audio2kp, audio2pose):
+    import time
+
     mp3_audio_path = f"./requests/{request_id}.mp3"
     wav_audio_path = f"./requests/{request_id}.wav"
     raw_video_path = f"./requests/{request_id}.raw.mp4"
     final_video_path = f"./requests/{request_id}.final.mp4"
 
+    t_start = time.time()
+
     # Convert mp3 to wav
     command = ("ffmpeg -y -i %s -async 1 -ac 1 -vn -acodec pcm_s16le -ar 16000 %s" % (mp3_audio_path, wav_audio_path))
     subprocess.call(command, shell=True, stdout=None)
 
+    t_video_conversion = time.time() - t_start
+
     audio_feature = get_audio_feature_from_audio(wav_audio_path)
     frames = len(audio_feature) // 4
+
+    t_audio_feature = time.time() - t_start
 
     img = io.imread(img_path)[:, :, :3]
     img = cv2.resize(img, (256, 256))
@@ -143,6 +151,8 @@ def audio2head(request_id, img_path, kp_detector, generator, audio2kp, audio2pos
 
     ref_pose_rot, ref_pose_trans = get_pose_from_audio(img, audio_feature, audio2pose)
     torch.cuda.empty_cache()
+
+    t_pose = time.time() - t_start
 
     opt = argparse.Namespace(**yaml.load(open("./config/parameters.yaml"), yaml.FullLoader))
     audio_f = []
@@ -166,23 +176,25 @@ def audio2head(request_id, img_path, kp_detector, generator, audio2kp, audio2pos
             temp_pos.append(pose)
         audio_f.append(wav_audio_path)
         poses.append(temp_pos)
+
+    t_annotations = time.time() - t_start
         
     audio_f = torch.from_numpy(np.array(audio_f,dtype=np.float32)).unsqueeze(0)
     poses = torch.from_numpy(np.array(poses, dtype=np.float32)).unsqueeze(0)
 
     num_batches = audio_f.shape[1]
     predictions_gen = []
-    total_frames = 0
+    processed_frames = 0
 
-    # generated_keypoints = {
-    #     "value": [],
-    #     "jacobian": [],
-    # }
+    generated_keypoints = {
+        "value": [],
+        "jacobian": [],
+    }
     
     # {value: (b, c, 2), jacobian_map: (b, j, 4, h, w), jacobian: (b, j, 2, 2), pred_fature: (b, f, h, w)}
     # where b = 1 for the initial image
     kp_gen_source = kp_detector(img)
-    for batch_index in tqdm.tqdm(range(num_batches), desc='rendering...'):
+    for batch_index in tqdm.tqdm(range(num_batches), desc='Generating keypoints...'):
         # same format as before, but for some reason, the first dimension is 1 for all of them, and the second dimension
         # is the batch size.
         gen_kp = audio2kp({
@@ -191,6 +203,9 @@ def audio2head(request_id, img_path, kp_detector, generator, audio2kp, audio2pos
             "id_img": img,
         })
 
+        # Unsure why this is necessary, but it is.
+        # Oh wait actually, it's probably due to padded audio.
+        # We select the first 3/4, then then section from 1/4 to 3/4, etc., skipping ahead by 1/2 the window size every time.
         if batch_index == 0:
             startid = 0
             end_id = opt.seq_len // 4 * 3
@@ -198,42 +213,59 @@ def audio2head(request_id, img_path, kp_detector, generator, audio2kp, audio2pos
             startid = opt.seq_len // 4
             end_id = opt.seq_len // 4 * 3
 
-        ones = [1, 1, 1, 1, 1, 1]
+        generated_keypoints['value'].append(gen_kp['value'][0][startid:end_id])
+        generated_keypoints['jacobian'].append(gen_kp['jacobian'][0][startid:end_id])
 
-        num_frames = end_id - startid
-        img_batch = img.repeat(num_frames, *ones[:len(img.shape) - 1])
-        # this code is horrid. im so sorry.
-        kp_gen_source_batch = {
-            'value': kp_gen_source['value'].repeat(num_frames, *ones[:len(kp_gen_source['value'].shape) - 1]),
-            'jacobian': kp_gen_source['jacobian'].repeat(num_frames, *ones[:len(kp_gen_source['jacobian'].shape) - 1]),
-            'jacobian_map': kp_gen_source['jacobian_map'].repeat(num_frames, *ones[:len(kp_gen_source['jacobian_map'].shape) - 1]),
-            'pred_fature': kp_gen_source['pred_fature'].repeat(num_frames, *ones[:len(kp_gen_source['pred_fature'].shape) - 1]),
-        }
-        tt = {
-            'value': gen_kp['value'][0, startid:end_id],
-            'jacobian': gen_kp['jacobian'][0, startid:end_id],
-        }
-        print('tt_value.shape:', tt['value'].shape)
-        print('tt_jacobian.shape:', tt['jacobian'].shape)
+    # concatenate all generated keypoints and run them through the generator in batches
+    generated_keypoints['value'] = torch.cat(generated_keypoints['value'], dim=0)
+    generated_keypoints['jacobian'] = torch.cat(generated_keypoints['jacobian'], dim=0)
 
-        out_gen = generator(img_batch, kp_source=kp_gen_source_batch, kp_driving=tt)
-        out_gen["kp_source"] = kp_gen_source_batch
-        out_gen["kp_driving"] = tt
-        del out_gen['sparse_deformed']
-        del out_gen['occlusion_map']
-        del out_gen['deformed']
-        
-        # # YIELD a prediction
-        # yield (np.transpose(out_gen['prediction'].data.cpu().numpy(), [0, 2, 3, 1])[0] * 255).astype(np.uint8)
-        predictions_gen.extend(
-            (np.transpose(out_gen['prediction'].data.cpu().numpy(), [0, 2, 3, 1]) * 255).astype(np.uint8)
-        )
+    t_keypoints = time.time() - t_start
 
-        total_frames += gen_kp['value'].shape[0]
-        if total_frames >= frames:
-            break
+    render_batch_size = 64
+    start_id = 0
+    total_frames_ = generated_keypoints['value'].shape[0]
+    with tqdm.tqdm("Rendering...", total=total_frames_ // render_batch_size) as pbar:
+        while start_id < total_frames_:
+            end_id = min(total_frames_, start_id + render_batch_size)
+
+            ones = [1, 1, 1, 1, 1, 1]
+
+            num_frames = end_id - start_id
+            img_batch = img.repeat(num_frames, *ones[:len(img.shape) - 1])
+            # this code is horrid. im so sorry.
+            kp_gen_source_batch = {
+                'value': kp_gen_source['value'].repeat(num_frames, *ones[:len(kp_gen_source['value'].shape) - 1]),
+                'jacobian': kp_gen_source['jacobian'].repeat(num_frames, *ones[:len(kp_gen_source['jacobian'].shape) - 1]),
+                'jacobian_map': kp_gen_source['jacobian_map'].repeat(num_frames, *ones[:len(kp_gen_source['jacobian_map'].shape) - 1]),
+                'pred_fature': kp_gen_source['pred_fature'].repeat(num_frames, *ones[:len(kp_gen_source['pred_fature'].shape) - 1]),
+            }
+            tt = {
+                'value': generated_keypoints['value'][start_id:end_id],
+                'jacobian': generated_keypoints['jacobian'][start_id:end_id],
+            }
+            print('tt_value.shape:', tt['value'].shape)
+            print('tt_jacobian.shape:', tt['jacobian'].shape)
+
+            out_gen = generator(img_batch, kp_source=kp_gen_source_batch, kp_driving=tt)
+            out_gen["kp_source"] = kp_gen_source_batch
+            out_gen["kp_driving"] = tt
+            del out_gen['sparse_deformed']
+            del out_gen['occlusion_map']
+            del out_gen['deformed']
+            
+            # # YIELD a prediction
+            # yield (np.transpose(out_gen['prediction'].data.cpu().numpy(), [0, 2, 3, 1])[0] * 255).astype(np.uint8)
+            predictions_gen.extend(
+                (np.transpose(out_gen['prediction'].data.cpu().numpy(), [0, 2, 3, 1]) * 255).astype(np.uint8)
+            )
+
+            start_id += render_batch_size
+            pbar.update()
 
     predictions_gen = predictions_gen[:frames]
+    
+    t_render = time.time() - t_start
     
     # save video
     fourcc = cv2.VideoWriter_fourcc(*'MP4V')
@@ -245,6 +277,11 @@ def audio2head(request_id, img_path, kp_detector, generator, audio2kp, audio2pos
 
     cmd = r'ffmpeg -y -i "%s" -i "%s" -vcodec libx264 "%s"' % (raw_video_path, mp3_audio_path, final_video_path)
     os.system(cmd)
+
+    t_total = time.time() - t_start
+    t_per_frame = t_total / total_frames_
+
+    print(f"{t_video_conversion=:.2f} {t_audio_feature=:.2f} {t_pose=:.2f} {t_annotations=:.2f} {t_keypoints=:.2f} {t_render=:.2f} {t_total=:.2f} {t_per_frame=:.2f}")
     
     return final_video_path
     
