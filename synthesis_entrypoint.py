@@ -59,6 +59,7 @@ class ModelHandler(object):
         self.model.load_state_dict(
             torch.load(model_pt_path, map_location=self.device)
         )
+        self.model.eval()
 
         self.initialized = True
 
@@ -72,17 +73,27 @@ class ModelHandler(object):
         :return: prediction output
         """
         pred_out = self.model.forward(data)
+        
+        # otf.send_intermediate_predict_response()
 
-        return self.postprocess(pred_out)
+        return self.postprocess(pred_out, context)
     
-    def postprocess(self, inference_output: list):
+    def postprocess(self, inference_output: list, context):
         # https://github.com/pytorch/serve/blob/master/examples/text_to_speech_synthesizer/waveglow_handler.py
         # input is a list of paths
 
+        import io
+
         results = []
+
         for filename in inference_output:
             with open(filename, "rb") as f:
-                results.append(f.read())
+                while True:
+                    chunk = f.read(4096)
+                    if len(chunk) == 0:
+                        break
+                    otf.send_intermediate_predict_response([chunk], context.request_ids, "intermediate", 200, context)
+                return [b'']
 
         return results
 
