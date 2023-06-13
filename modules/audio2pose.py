@@ -29,18 +29,12 @@ class audio2poseLSTM(nn.Module):
         res = torch.cat(result,dim=1)
         return res
 
-def get_pose_from_audio(img,audio,model_path):
+def get_pose_from_audio(img, audio):
+    from preloaded_model_manager import audio2pose
+
     num_frame = len(audio) // 4
     minv = np.array([-0.639, -0.501, -0.47, -102.6, -32.5, 184.6], dtype=np.float32)
     maxv = np.array([0.411, 0.547, 0.433, 159.1, 116.5, 376.5], dtype=np.float32)
-
-
-    generator = audio2poseLSTM().cuda()
-
-    ckpt_para = torch.load(model_path)
-
-    generator.load_state_dict(ckpt_para["audio2pose"])
-    generator.eval()
 
     audio_seq = []
     for i in range(num_frame):
@@ -48,10 +42,7 @@ def get_pose_from_audio(img,audio,model_path):
 
     audio = torch.from_numpy(np.array(audio_seq,dtype=np.float32)).unsqueeze(0).cuda()
 
-    x = {}
-    x["img"] = img
-    x["audio"] = audio
-    poses = generator(x)
+    poses = audio2pose({"img": img, "audio": audio})
 
     print(poses.shape)
     poses = poses.cpu().data.numpy()[0]

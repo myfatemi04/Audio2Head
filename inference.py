@@ -14,6 +14,7 @@ from modules.keypoint_detector import KPDetector
 from modules.audio2kp import AudioModel3D
 import yaml,os,imageio
 import tqdm
+from preloaded_model_manager import kp_detector, generator, audio2kp
 
 def draw_annotation_box( image, rotation_vector, translation_vector, color=(255, 255, 255), line_width=2):
     """Draw a 3D box as annotation of pose"""
@@ -118,12 +119,18 @@ def get_audio_feature_from_audio(audio_path,norm = True):
         cat = np.concatenate([a[:frame_num], b[:frame_num], c[:frame_num], c_flag[:frame_num]], axis=1)
         return cat
 
-def audio2head(audio_path, img_path, model_path, save_path):
-    temp_audio="./results/temp.wav"
-    command = ("ffmpeg -y -i %s -async 1 -ac 1 -vn -acodec pcm_s16le -ar 16000 %s" % (audio_path, temp_audio))
+@torch.no_grad()
+def audio2head(request_id, img_path, model_path):
+    mp3_audio_path = f"./requests/{request_id}.mp3"
+    wav_audio_path = f"./requests/{request_id}.wav"
+    raw_video_path = f"./requests/{request_id}.raw.mp4"
+    final_video_path = f"./requests/{request_id}.final.mp4"
+
+    # Convert mp3 to wav
+    command = ("ffmpeg -y -i %s -async 1 -ac 1 -vn -acodec pcm_s16le -ar 16000 %s" % (mp3_audio_path, wav_audio_path))
     output = subprocess.call(command, shell=True, stdout=None)
 
-    audio_feature = get_audio_feature_from_audio(temp_audio)
+    audio_feature = get_audio_feature_from_audio(wav_audio_path)
     frames = len(audio_feature) // 4
 
     img = io.imread(img_path)[:, :, :3]
@@ -133,52 +140,51 @@ def audio2head(audio_path, img_path, model_path, save_path):
     img = img.transpose((2, 0, 1))
     img = torch.from_numpy(img).unsqueeze(0).cuda()
 
-
-    ref_pose_rot, ref_pose_trans = get_pose_from_audio(img, audio_feature, model_path)
+    ref_pose_rot, ref_pose_trans = get_pose_from_audio(img, audio_feature)
     torch.cuda.empty_cache()
 
-    config_file = r"./config/vox-256.yaml"
-    with open(config_file) as f:
-        config = yaml.load(f, yaml.FullLoader)
-    kp_detector = KPDetector(**config['model_params']['kp_detector_params'],
-                             **config['model_params']['common_params'])
-    generator = OcclusionAwareGenerator(**config['model_params']['generator_params'],
-                                        **config['model_params']['common_params'])
-    kp_detector = kp_detector.cuda()
-    generator = generator.cuda()
+    # config_file = r"./config/vox-256.yaml"
+    # with open(config_file) as f:
+    #     config = yaml.load(f, yaml.FullLoader)
+    # kp_detector = KPDetector(**config['model_params']['kp_detector_params'],
+    #                          **config['model_params']['common_params'])
+    # generator = OcclusionAwareGenerator(**config['model_params']['generator_params'],
+    #                                     **config['model_params']['common_params'])
+    # kp_detector = kp_detector.cuda()
+    # generator = generator.cuda()
 
-    opt = argparse.Namespace(**yaml.load(open("./config/parameters.yaml"), yaml.FullLoader))
-    audio2kp = AudioModel3D(opt).cuda()
+    # audio2kp = AudioModel3D(opt).cuda()
 
-    checkpoint  = torch.load(model_path)
-    kp_detector.load_state_dict(checkpoint["kp_detector"])
-    generator.load_state_dict(checkpoint["generator"])
-    audio2kp.load_state_dict(checkpoint["audio2kp"])
+    # checkpoint  = torch.load(model_path)
+    # kp_detector.load_state_dict(checkpoint["kp_detector"])
+    # generator.load_state_dict(checkpoint["generator"])
+    # audio2kp.load_state_dict(checkpoint["audio2kp"])
 
-    generator.eval()
-    kp_detector.eval()
-    audio2kp.eval()
+    # generator.eval()
+    # kp_detector.eval()
+    # audio2kp.eval()
     
+    opt = argparse.Namespace(**yaml.load(open("./config/parameters.yaml"), yaml.FullLoader))
     audio_f = []
     poses = []
     pad = np.zeros((4,41),dtype=np.float32)
     for i in range(0, frames, opt.seq_len // 2):
-        temp_audio = []
+        wav_audio_path = []
         temp_pos = []
         for j in range(opt.seq_len):
             if i + j < frames:
-                temp_audio.append(audio_feature[(i+j)*4:(i+j)*4+4])
+                wav_audio_path.append(audio_feature[(i+j)*4:(i+j)*4+4])
                 trans = ref_pose_trans[i + j]
                 rot = ref_pose_rot[i + j]
             else:
-                temp_audio.append(pad)
+                wav_audio_path.append(pad)
                 trans = ref_pose_trans[-1]
                 rot = ref_pose_rot[-1]
 
             pose = np.zeros([256, 256])
             draw_annotation_box(pose, np.array(rot), np.array(trans))
             temp_pos.append(pose)
-        audio_f.append(temp_audio)
+        audio_f.append(wav_audio_path)
         poses.append(temp_pos)
         
     audio_f = torch.from_numpy(np.array(audio_f,dtype=np.float32)).unsqueeze(0)
@@ -224,30 +230,27 @@ def audio2head(audio_path, img_path, model_path, save_path):
         if total_frames >= frames:
             break
 
-    log_dir = save_path
-    if not os.path.exists(os.path.join(log_dir, "temp")):
-        os.makedirs(os.path.join(log_dir, "temp"))
-    image_name = os.path.basename(img_path)[:-4]+ "_" + os.path.basename(audio_path)[:-4] + ".mp4"
+    # log_dir = save_path
+    # if not os.path.exists(os.path.join(log_dir, "temp")):
+    #     os.makedirs(os.path.join(log_dir, "temp"))
+    # image_name = os.path.basename(img_path)[:-4]+ "_" + os.path.basename(audio_path)[:-4] + ".mp4"
 
-    video_path = os.path.join(log_dir, "temp", image_name)
+    # video_path = os.path.join(log_dir, "temp", image_name)
     
-    np.save(os.path.join(log_dir, "temp", image_name[:-4] + ".npy"), predictions_gen)
+    # np.save(os.path.join(log_dir, "temp", image_name[:-4] + ".npy"), predictions_gen)
 
     # save video
     fourcc = cv2.VideoWriter_fourcc(*'MP4V')
-    video = cv2.VideoWriter(video_path, fourcc, 25, predictions_gen[0].shape[:2][::-1])
+    video = cv2.VideoWriter(raw_video_path, fourcc, 25, predictions_gen[0].shape[:2][::-1])
     for image in predictions_gen:
         # switch rgb color channels
         video.write(image[:, :, ::-1])
     video.release()
 
-    # imageio.mimsave(video_path, predictions_gen, fps=25.0)
-
-    save_video = os.path.join(log_dir, image_name)
-    cmd = r'ffmpeg -y -i "%s" -i "%s" -vcodec libx264 "%s"' % (video_path, audio_path, save_video)
+    cmd = r'ffmpeg -y -i "%s" -i "%s" -vcodec libx264 "%s"' % (raw_video_path, mp3_audio_path, final_video_path)
     os.system(cmd)
-    os.remove(video_path)
-    return save_video
+    
+    return final_video_path
     
 
 if __name__ == '__main__':

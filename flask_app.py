@@ -5,6 +5,8 @@ sys.path = ['', '/usr/lib/python38.zip', '/usr/lib/python3.8', '/usr/lib/python3
 import os
 import elevenlabs
 from inference import audio2head
+import flask_cors
+import random
 
 with open("11.key") as f:
 	os.environ['ELEVENLABS_API_KEY'] = f.read().strip()
@@ -12,6 +14,8 @@ with open("11.key") as f:
 import flask
 
 app = flask.Flask(__name__)
+
+flask_cors.CORS(app)
 
 @app.route("/")
 def index():
@@ -24,7 +28,7 @@ function anim() {
 		return;
 	}
 	var video = document.getElementById('v');
-	video.src = 'http://34.69.198.158/animate?text=' + encodeURIComponent(text);
+	video.src = 'http://35.224.119.12/animate?text=' + encodeURIComponent(text);
 	console.log("Animating...");
 }
 </script>
@@ -35,18 +39,21 @@ function anim() {
 <video id=v controls></video>	
 """
 
-@app.route("/animate", methods=['GET'])
+@app.route("/synthesize", methods=['POST'])
 def animate_head():
-	text = flask.request.args['text']
+	text = flask.request.json['text']
+
 	# generate driving audio
-	audio = elevenlabs.generate(text, api_key=os.environ['ELEVENLABS_API_KEY'], voice='ovOwiv8AZiT34IOXyVTO')
-	# # return as mp3
-	# return flask.Response(audio, mimetype='audio/mpeg')
-	# return audio
+	audio = elevenlabs.generate(text, api_key=os.environ['ELEVENLABS_API_KEY'], voice='AUfmNX7a1AJ7HNn4TKft')
+	
+	request_id = "request_" + str(random.randint(0, 1000000000))
+
 	# save to mp3
-	with open('audio.mp3', 'wb') as f:
+	with open(f'./requests/{request_id}.mp3', 'wb') as f:
 		f.write(audio)
-	path = audio2head('audio.mp3', 'pavel.png', './checkpoints/audio2head.pth.tar', './results')
+
+	path = audio2head(request_id, 'pavel.png', './checkpoints/audio2head.pth.tar')
+	# path = audio2head('audio.mp3', 'pavel.png', './checkpoints/audio2head.pth.tar', './results')
 	print(path)
 	# write mp4 response
 	return flask.send_file(path, mimetype='video/mp4')
