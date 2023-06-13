@@ -159,22 +159,22 @@ def audio2head(request_id, img_path, kp_detector, generator, audio2kp, audio2pos
     poses = []
     pad = np.zeros((4,41),dtype=np.float32)
     for i in range(0, frames, opt.seq_len // 2):
-        wav_audio_path = []
+        audio_fs = []
         temp_pos = []
         for j in range(opt.seq_len):
             if i + j < frames:
-                wav_audio_path.append(audio_feature[(i+j)*4:(i+j)*4+4])
+                audio_fs.append(audio_feature[(i+j)*4:(i+j)*4+4])
                 trans = ref_pose_trans[i + j]
                 rot = ref_pose_rot[i + j]
             else:
-                wav_audio_path.append(pad)
+                audio_fs.append(pad)
                 trans = ref_pose_trans[-1]
                 rot = ref_pose_rot[-1]
 
             pose = np.zeros([256, 256])
             draw_annotation_box(pose, np.array(rot), np.array(trans))
             temp_pos.append(pose)
-        audio_f.append(wav_audio_path)
+        audio_f.append(audio_fs)
         poses.append(temp_pos)
 
     t_annotations = time.time() - t_start
@@ -280,6 +280,10 @@ def audio2head(request_id, img_path, kp_detector, generator, audio2kp, audio2pos
 
     t_total = time.time() - t_start
     t_per_frame = t_total / total_frames_
+
+    os.remove(raw_video_path)
+    os.remove(mp3_audio_path)
+    os.remove(wav_audio_path)
 
     print(f"{t_video_conversion=:.2f} {t_audio_feature=:.2f} {t_pose=:.2f} {t_annotations=:.2f} {t_keypoints=:.2f} {t_render=:.2f} {t_total=:.2f} {t_per_frame=:.2f}")
     

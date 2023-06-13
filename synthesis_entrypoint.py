@@ -89,6 +89,8 @@ class ModelHandler(object):
             while chunk := f.read(4096):
                 otf.send_intermediate_predict_response([chunk], context.request_ids, "intermediate", 200, context)
             
+        os.remove(path)
+
         return [b'']
 
         # results = []
