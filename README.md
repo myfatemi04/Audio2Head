@@ -1,5 +1,21 @@
 # Audio2Head: Audio-driven One-shot Talking-head Generation with Natural Head Motion (IJCAI 2021)
 
+## Serving This Model
+
+Written by: Michael Fatemi
+
+First, you must `pip install torchserve torch-model-archiver`.
+
+Then, create a model archive using `create_model_archive.py`. Note that this must be done when modifying the model weights, the model inference code, and the custom handler code.
+
+This model requires a custom handler, which was created according to [this guide](https://github.com/pytorch/serve/blob/master/docs/custom_service.md).
+
+This also requires Java, which you can install with `sudo apt-get install -y openjdk-17-jdk`.
+
+Configuration for TorchServe is in `config.properties`, according to [this guide](https://pytorch.org/serve/configuration.html).
+
+In addition to default dependencies, metrics are collected with `nvgpu` (`pip install nvgpu`).
+
 #### [Paper](https://www.ijcai.org/proceedings/2021/0152.pdf) | [Demo](https://www.youtube.com/watch?v=xvcBJ29l8rA)
 
 #### Requirements

@@ -29,8 +29,8 @@ class audio2poseLSTM(nn.Module):
         res = torch.cat(result,dim=1)
         return res
 
-def get_pose_from_audio(img, audio):
-    from preloaded_model_manager import audio2pose
+def get_pose_from_audio(img, audio, audio2pose):
+    # from preloaded_model_manager import audio2pose
 
     num_frame = len(audio) // 4
     minv = np.array([-0.639, -0.501, -0.47, -102.6, -32.5, 184.6], dtype=np.float32)

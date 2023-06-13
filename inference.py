@@ -14,7 +14,7 @@ from modules.keypoint_detector import KPDetector
 from modules.audio2kp import AudioModel3D
 import yaml,os,imageio
 import tqdm
-from preloaded_model_manager import kp_detector, generator, audio2kp
+# from preloaded_model_manager import kp_detector, generator, audio2kp
 
 def draw_annotation_box( image, rotation_vector, translation_vector, color=(255, 255, 255), line_width=2):
     """Draw a 3D box as annotation of pose"""
@@ -120,7 +120,7 @@ def get_audio_feature_from_audio(audio_path,norm = True):
         return cat
 
 @torch.no_grad()
-def audio2head(request_id, img_path, model_path):
+def audio2head(request_id, img_path, kp_detector, generator, audio2kp, audio2pose):
     mp3_audio_path = f"./requests/{request_id}.mp3"
     wav_audio_path = f"./requests/{request_id}.wav"
     raw_video_path = f"./requests/{request_id}.raw.mp4"
@@ -140,7 +140,7 @@ def audio2head(request_id, img_path, model_path):
     img = img.transpose((2, 0, 1))
     img = torch.from_numpy(img).unsqueeze(0).cuda()
 
-    ref_pose_rot, ref_pose_trans = get_pose_from_audio(img, audio_feature)
+    ref_pose_rot, ref_pose_trans = get_pose_from_audio(img, audio_feature, audio2pose)
     torch.cuda.empty_cache()
 
     # config_file = r"./config/vox-256.yaml"
