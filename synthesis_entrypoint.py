@@ -1,9 +1,24 @@
 import torch
 import os
+import ts.protocol.otf_message_handler as otf
 
 """
 Adapted from: https://github.com/pytorch/serve/blob/master/docs/custom_service.md
 """
+
+def load_config_and_opt(base_dir):
+    import yaml, argparse
+
+    config_file = r"config/vox-256.yaml"
+    parameters_file = r"config/parameters.yaml"
+
+    with open(os.path.join(base_dir, config_file)) as f:
+        config = yaml.load(f, yaml.FullLoader)
+
+    with open(os.path.join(base_dir, parameters_file)) as f:
+        opt = argparse.Namespace(**yaml.load(f, yaml.FullLoader))
+
+    return (config, opt)
 
 class ModelHandler(object):
     """
@@ -38,7 +53,9 @@ class ModelHandler(object):
         
         import torchserve_model
 
-        self.model = torchserve_model.TorchserveModel()
+        config, opt = load_config_and_opt(model_dir)
+
+        self.model = torchserve_model.TorchserveModel(config, opt).to(self.device)
         self.model.load_state_dict(
             torch.load(model_pt_path, map_location=self.device)
         )
@@ -55,7 +72,19 @@ class ModelHandler(object):
         :return: prediction output
         """
         pred_out = self.model.forward(data)
-        return pred_out
+
+        return self.postprocess(pred_out)
+    
+    def postprocess(self, inference_output: list):
+        # https://github.com/pytorch/serve/blob/master/examples/text_to_speech_synthesizer/waveglow_handler.py
+        # input is a list of paths
+
+        results = []
+        for filename in inference_output:
+            with open(filename, "rb") as f:
+                results.append(f.read())
+
+        return results
 
 # # Create model object
 # model = None

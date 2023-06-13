@@ -1,26 +1,20 @@
 from typing import Any, Mapping
 import torch
-import yaml
-import argparse
 import random
 import os
 import elevenlabs
 
-config_file = r"./config/vox-256.yaml"
-parameters_file = r"./config/parameters.yaml"
-
-with open(config_file) as f:
-    config = yaml.load(f, yaml.FullLoader)
-
-with open(parameters_file) as f:
-    opt = argparse.Namespace(**yaml.load(f, yaml.FullLoader))
-
 class TorchserveModel(torch.nn.Module):
-    def __init__(self):
+    # config and opt are passed in from `synthesis_entrypoint.py`
+    def __init__(self, config, opt):
         from modules.generator import OcclusionAwareGenerator
         from modules.keypoint_detector import KPDetector
         from modules.audio2kp import AudioModel3D
         from modules.audio2pose import audio2poseLSTM
+        # from modules.generator import OcclusionAwareGenerator
+        # from modules.keypoint_detector import KPDetector
+        # from modules.audio2kp import AudioModel3D
+        # from modules.audio2pose import audio2poseLSTM
 
         super().__init__()
 
@@ -37,11 +31,18 @@ class TorchserveModel(torch.nn.Module):
         self.audio2kp.load_state_dict(checkpoint["audio2kp"], strict)
         self.audio2pose.load_state_dict(checkpoint["audio2pose"], strict)
 
-    def forward(self, text: str):
+    def forward(self, instances: list):
         from inference import audio2head
 
+        assert len(instances) == 1, "Only one text input is supported at this time."
+
+        with open("11.key", "r") as f:
+            api_key = f.read().strip()
+
+        text = instances[0]['body']
+
         # generate driving audio
-        audio = elevenlabs.generate(text, api_key=os.environ['ELEVENLABS_API_KEY'], voice='AUfmNX7a1AJ7HNn4TKft')
+        audio = elevenlabs.generate(text, api_key=api_key, voice='AUfmNX7a1AJ7HNn4TKft')
         
         request_id = "request_" + str(random.randint(0, 1000000000))
 
@@ -54,7 +55,7 @@ class TorchserveModel(torch.nn.Module):
 
         path = audio2head(request_id, 'pavel.png', self.kp_detector, self.generator, self.audio2kp, self.audio2pose)
 
-        print(path)
+        return [path]
 
 # Prevent Torchserve from being confused about which `torch.nn.Module` it should be serving.
 # Import statements above add ambiguity.
