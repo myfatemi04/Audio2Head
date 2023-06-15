@@ -16,6 +16,10 @@ Configuration for TorchServe is in `config.properties`, according to [this guide
 
 In addition to default dependencies, metrics are collected with `nvgpu` (`pip install nvgpu`).
 
+## Details about the paper
+
+Written by the original authors of the repo
+
 #### [Paper](https://www.ijcai.org/proceedings/2021/0152.pdf) | [Demo](https://www.youtube.com/watch?v=xvcBJ29l8rA)
 
 #### Requirements
